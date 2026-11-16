@@ -50,6 +50,13 @@ def _entrant(config, team):
     return name + ''.join(f' +{x}' for x in extra)  # mixed or upgraded teams are their own entrants
 
 
+def _demon_at(truth, deaths, day, point):
+    """The living Imp at a probe: after a starpass, truth still lists the dead Imp too."""
+    dead = {p for d, phase, p in deaths
+            if d < day or (d == day and (phase == 'night' or (point == 'nominations' and phase != 'nominations')))}
+    return next((n for n, t in truth.items() if t['character'] == 'Imp' and n not in dead), None)
+
+
 def game_metrics(path):
     path = Path(path)
     if not (path / 'result.json').exists():
@@ -78,9 +85,13 @@ def game_metrics(path):
     by_point = defaultdict(list)
     for r in probes:
         by_point[(r['day'], r['point'])].append(r)
+    deaths = [(e['day'], e['phase'], e['data']['player']) for e in events if e['kind'] == 'death']
+    imp_by_day = {}
     for (day, point), rs in by_point.items():
         truth = rs[0]['truth']
-        imp = next((n for n, t in truth.items() if t['character'] == 'Imp'), None)
+        imp = _demon_at(truth, deaths, day, point)
+        if point == 'nominations':
+            imp_by_day[day] = imp
         good_reads = [r for r in rs if r['team'] == 'good' and r.get('players')]
         town = {}
         for n in truth:
@@ -98,6 +109,13 @@ def game_metrics(path):
                        if v.get('demon') is not None and town.get(n) is not None]
                 if err:
                     tom.append(statistics.mean(err))
+    start_imp = next((n for n, c in start.items() if c == 'Imp'), None)
+    on_demon = defaultdict(list)
+    for e in events:
+        if e['kind'] == 'vote' and team.get(e['data']['voter']) == 'good' \
+                and e['data']['nominee'] == imp_by_day.get(e['day'], start_imp):
+            on_demon[e['day']].append(e['data']['yes'])
+    m['yes_on_demon_by_day'] = {d: mean(v) for d, v in sorted(on_demon.items())}
     m['demon_by_day'] = {d: mean(v) for d, v in sorted(demon.items())}
     m['demon'] = mean([x for v in demon.values() for x in v if x is not None])
     m['brier'] = mean(brier)
